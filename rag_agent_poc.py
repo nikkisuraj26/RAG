@@ -30,10 +30,16 @@ from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExport
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
-from opentelemetry.logs import set_logger_provider
-from opentelemetry.sdk.logs import LoggerProvider, LoggingHandler
-from opentelemetry.sdk.logs.export import BatchLogRecordProcessor
-from opentelemetry.exporter.otlp.proto.http.log_exporter import OTLPLogExporter
+# from opentelemetry.logs import set_logger_provider
+# from opentelemetry.sdk.logs import LoggerProvider, LoggingHandler
+# from opentelemetry.sdk.logs.export import BatchLogRecordProcessor
+#from opentelemetry.exporter.otlp.proto.http.log_exporter import OTLPLogExporter
+
+from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
+from opentelemetry._logs import set_logger_provider
+from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
+from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
+
 
 # ── OpenInference (AI-Aware Semantics) ────────────────────────────────────────
 from openinference.instrumentation.langchain import LangChainInstrumentor
@@ -93,16 +99,37 @@ hallucination_counter= meter.create_counter("rag_ungrounded_answers_total",descr
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — LOGS (correlated with traces)
 # ═════════════════════════════════════════════════════════════════════════════
-logger_provider = LoggerProvider(resource=resource)
-logger_provider.add_log_record_processor(
-    BatchLogRecordProcessor(OTLPLogExporter(endpoint=OTLP_LOGS_ENDPOINT))
-)
+# logger_provider = LoggerProvider(resource=resource)
+# logger_provider.add_log_record_processor(
+#     BatchLogRecordProcessor(OTLPLogExporter(endpoint=OTLP_LOGS_ENDPOINT))
+# )
+# set_logger_provider(logger_provider)
+
+# handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
+# logger  = logging.getLogger("rag-logger")
+# logger.addHandler(handler)
+# logger.setLevel(logging.INFO)
+
+
+# Create provider
+logger_provider = LoggerProvider()
 set_logger_provider(logger_provider)
 
+# Exporter
+log_exporter = OTLPLogExporter(endpoint=OTLP_LOGS_ENDPOINT)
+
+# Processor
+logger_provider.add_log_record_processor(
+    BatchLogRecordProcessor(log_exporter)
+)
+
+# Attach handler to Python logging
 handler = LoggingHandler(level=logging.INFO, logger_provider=logger_provider)
-logger  = logging.getLogger("rag-logger")
+
+logger = logging.getLogger("rag-logger")
 logger.addHandler(handler)
 logger.setLevel(logging.INFO)
+
 
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 5 — AUTO-INSTRUMENTORS (Glass-Box Nets)
@@ -114,23 +141,23 @@ HTTPXClientInstrumentor().instrument()     # Captures async LLM HTTP packets
 # ═════════════════════════════════════════════════════════════════════════════
 # SECTION 6 — LLM + EMBEDDINGS + VECTOR STORE
 # ═════════════════════════════════════════════════════════════════════════════
-api_key = os.getenv("OPENAI_API_KEY")
+api_key = os.getenv("AZURE_OPENAI_API_KEY")
 if not api_key:
-    raise ValueError("OPENAI_API_KEY not found in .env")
+    raise ValueError("AZURE_OPENAI_API_KEY not found in .env")
 
-logger.info(f"Initializing LLM with Azure Deployment: {os.getenv('OPENAI_DEPLOYMENT')}")
+logger.info(f"Initializing LLM with Azure Deployment: {os.getenv('AZURE_OPENAI_DEPLOYMENT')}")
 llm = AzureChatOpenAI(
-    azure_deployment=os.getenv("OPENAI_DEPLOYMENT"),
-    api_version=os.getenv("OPENAI_API_VERSION"),
-    azure_endpoint=os.getenv("OPENAI_API_BASE"),
+    azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_API_BASE"),
     api_key=api_key,
     temperature=0
 )
 
 embeddings = AzureOpenAIEmbeddings(
-    azure_deployment=os.getenv("OPENAI_DEPLOYMENT"),
-    api_version=os.getenv("OPENAI_API_VERSION"),
-    azure_endpoint=os.getenv("OPENAI_API_BASE"),
+    azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_API_BASE"),
     api_key=api_key,
 )
 
@@ -297,7 +324,7 @@ def generate_answer_node(state: RAGState) -> dict:
         span.set_attribute("input.value",           state["user_query"])
         span.set_attribute("rag.query.original",    state["user_query"])
         span.set_attribute("rag.query.rewritten",   state["rewritten_query"])
-        span.set_attribute("rag.llm.model",         os.getenv("OPENAI_DEPLOYMENT"))
+        span.set_attribute("rag.llm.model",         os.getenv("AZURE_OPENAI_DEPLOYMENT"))
 
         system_prompt = (
             "You are a helpful assistant that answers questions strictly based on "
@@ -530,3 +557,4 @@ if __name__ == "__main__":
 #
 # Character detail:
 #   curl "http://localhost:8001/ask?query=What is Freud’s opinion on modern smartphone addiction?"
+#python -m phoenix.server.main serve
