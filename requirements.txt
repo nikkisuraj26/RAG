@@ -1,0 +1,19 @@
+# ── Core RAG ──────────────────────────────────────────────────
+fastapi
+uvicorn
+python-dotenv
+google-generativeai
+langchain
+langchain-community
+langchain-google-genai
+langchain-chroma
+chromadb
+
+# ── Observability ─────────────────────────────────────────────
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-instrumentation-requests
+opentelemetry-instrumentation-httpx
+openinference-instrumentation-langchain
+openinference-semantic-conventions
+arize-phoenix
