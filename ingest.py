@@ -31,7 +31,7 @@ logger.info(f"Loaded {len(raw_docs)} document(s), total chars: {sum(len(d.page_c
 logger.info("Splitting into chunks...")
 splitter = RecursiveCharacterTextSplitter(
     chunk_size=1000,
-    chunk_overlap=150,
+    chunk_overlap=100,
     separators=["\n\n", "\n", ". ", " ", ""],
 )
 chunks = splitter.split_documents(raw_docs)
@@ -45,24 +45,64 @@ for i, chunk in enumerate(chunks):
 
 logger.info(f"Total chunks created: {len(chunks)}")
 logger.info(f"Avg chunk size: {sum(c.metadata['char_count'] for c in chunks) // len(chunks)} chars")
+# ── 3. EMBED + STORE (RATE-LIMIT SAFE) ───────────────────────
 
-# ── 3. EMBED + STORE ─────────────────────────────────────────
-logger.info("Embedding and storing in Chroma (this may take a minute)...")
+logger.info("Embedding and storing in Chroma (rate-limit safe mode)...")
+
 embeddings = AzureOpenAIEmbeddings(
-    azure_deployment=os.getenv("OPENAI_DEPLOYMENT"),
-    api_version=os.getenv("OPENAI_API_VERSION"),
-    azure_endpoint=os.getenv("OPENAI_API_BASE"),
-    api_key=os.getenv("OPENAI_API_KEY"),
+    azure_deployment=os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT"),
+    api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_OPENAI_API_BASE"),
+    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
 )
 
-start = time.time()
-vector_store = Chroma.from_documents(
-    documents=chunks,
-    embedding=embeddings,
+# Initialize empty vector store
+vector_store = Chroma(
     collection_name=COLLECTION,
+    embedding_function=embeddings,
     persist_directory=CHROMA_DIR,
 )
+
+# ✅ SAFE CONFIG (for S0 tier + ada-002)
+BATCH_SIZE = 20       # ≤20 is safe
+DELAY = 3             # seconds between batches
+MAX_RETRIES = 5       # retry attempts
+
+
+def add_with_retry(batch, batch_num):
+    """Add documents with retry on rate limit"""
+    for attempt in range(MAX_RETRIES):
+        try:
+            vector_store.add_documents(batch)
+            logger.info(f"✅ Batch {batch_num} stored ({len(batch)} chunks)")
+            return
+        except Exception as e:
+            logger.warning(f"⚠️ Batch {batch_num} failed (attempt {attempt+1}): {e}")
+
+            if "429" in str(e) or "RateLimit" in str(e):
+                logger.warning("⏳ Rate limit hit. Sleeping 60 seconds...")
+                time.sleep(60)
+            else:
+                time.sleep(10)
+
+    raise Exception(f"❌ Batch {batch_num} failed after {MAX_RETRIES} retries")
+
+
+# ✅ BATCH PROCESSING
+start = time.time()
+
+total_batches = (len(chunks) // BATCH_SIZE) + 1
+logger.info(f"Processing {len(chunks)} chunks in {total_batches} batches...")
+
+for i in range(0, len(chunks), BATCH_SIZE):
+    batch = chunks[i:i + BATCH_SIZE]
+    batch_num = (i // BATCH_SIZE) + 1
+
+    add_with_retry(batch, batch_num)
+
+    # small delay to avoid burst traffic
+    time.sleep(DELAY)
+
 elapsed = round(time.time() - start, 2)
 
 logger.info(f"✅ Ingestion complete! {len(chunks)} chunks stored in {CHROMA_DIR} ({elapsed}s)")
-logger.info("Now run: python rag_agent_poc.py")
